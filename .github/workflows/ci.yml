@@ -1,0 +1,63 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  # CPU everywhere, plus the Vulkan code path through Mesa's lavapipe
+  # software driver, so GPU kernels are exercised without a GPU.
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers libvulkan1
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --exclude rverdict-spike
+        env:
+          RVERDICT_EXPECT_BACKEND: wgpu
+
+  # GitHub's macOS runners expose no usable GPU, so this proves the Metal
+  # build compiles and the CPU fallback works.
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p rverdict-core -p rverdict-model -p rverdict-eval
+      - run: cargo test -p rverdict-engine --no-default-features --features metal
+      - run: cargo build -p rverdict-cli --no-default-features --features metal
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --exclude rverdict-spike
+
+  # No GPU runners: CUDA and ROCm builds are compile-checked here and run on
+  # rented hardware against docs/backend-checklist.md.
+  gpu-vendor-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check -p rverdict-cli --features cuda
+      - run: cargo check -p rverdict-cli --features rocm

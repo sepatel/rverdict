@@ -1,0 +1,1 @@
+doc-valid-idents = ["ModernBERT", "PyTorch", "JevBench", "AdamW", "TypeSafe", "WebGPU", "CubeCL", "ROCm", "SafeTensors", "..", ]

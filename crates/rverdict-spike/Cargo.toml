@@ -1,0 +1,32 @@
+[package]
+name = "rverdict-spike"
+description = "Phase 0 spike: parity, smoke and benchmark checks for rverdict-model"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+burn = { workspace = true, features = ["default", "autodiff"] }
+candle-core = "0.11"
+candle-nn = "0.11"
+candle-transformers = "0.11"
+clap.workspace = true
+hf-hub = { workspace = true, features = ["blocking"] }
+rverdict-model = { path = "../rverdict-model" }
+serde_json.workspace = true
+tokenizers.workspace = true
+
+[features]
+default = ["flex", "ndarray", "vulkan", "x86-v4"]
+flex = ["burn/flex"]
+ndarray = ["burn/ndarray"]
+cpu = ["burn/cpu"]
+vulkan = ["burn/vulkan"]
+x86-v4 = ["burn/x86-v4"]
+dispatch = ["burn/dispatch"]
+
+[lints]
+workspace = true

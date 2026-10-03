@@ -1,0 +1,18 @@
+[package]
+name = "rverdict-eval"
+description = "Benchmarks and metrics for rverdict decision models"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"] }
+rverdict-core = { path = "../rverdict-core" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,31 @@
+[package]
+name = "rverdict-cli"
+description = "The rverdict command: ask decision questions, inspect backends, evaluate models"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "rverdict"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+rverdict-core = { path = "../rverdict-core" }
+rverdict-engine = { path = "../rverdict-engine", default-features = false }
+rverdict-eval = { path = "../rverdict-eval" }
+serde_json.workspace = true
+
+[features]
+default = ["vulkan"]
+vulkan = ["rverdict-engine/vulkan"]
+metal = ["rverdict-engine/metal"]
+webgpu = ["rverdict-engine/webgpu"]
+cuda = ["rverdict-engine/cuda"]
+rocm = ["rverdict-engine/rocm"]
+
+[lints]
+workspace = true

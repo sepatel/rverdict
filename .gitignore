@@ -1,0 +1,8 @@
+/target
+/models
+/data/built
+/data/downloads
+/runs
+*.safetensors
+*.pt
+*.bin

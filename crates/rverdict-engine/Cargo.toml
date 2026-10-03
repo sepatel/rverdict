@@ -1,0 +1,43 @@
+[package]
+name = "rverdict-engine"
+description = "Embeddable rverdict inference engine: checkpoints, backend selection, packing, batching"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+burn = { workspace = true, features = ["default", "dispatch", "flex"] }
+burn-store = { workspace = true, features = ["std", "safetensors"] }
+hf-hub = { workspace = true, features = ["blocking"] }
+regex = "1"
+rverdict-core = { path = "../rverdict-core" }
+rverdict-model = { path = "../rverdict-model" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokenizers.workspace = true
+# Enumerates adapters before cubecl is asked for one, because cubecl panics
+# from inside the driver when a requested adapter type is absent.
+wgpu = { version = "29", optional = true }
+cubecl-hip-sys = { version = "7.14", optional = true }
+# Persists GPU autotune results and compiled kernels between runs.
+cubecl-runtime = { version = "0.10", optional = true }
+pollster = { version = "0.4", optional = true }
+cudarc = { version = "0.19", optional = true, default-features = false, features = [
+    "std", "driver", "fallback-dynamic-loading", "cuda-version-from-build-system", "fallback-latest",
+] }
+
+[features]
+default = ["vulkan"]
+# The wgpu targets are mutually exclusive: Vulkan for Linux, Windows and
+# Android, Metal for macOS, WebGPU (WGSL on any wgpu adapter, including DX12).
+vulkan = ["burn/vulkan", "dep:wgpu", "dep:pollster", "dep:cubecl-runtime"]
+metal = ["burn/metal", "dep:wgpu", "dep:pollster", "dep:cubecl-runtime"]
+webgpu = ["burn/webgpu", "dep:wgpu", "dep:pollster", "dep:cubecl-runtime"]
+cuda = ["burn/cuda", "dep:cudarc", "dep:cubecl-runtime"]
+rocm = ["burn/rocm", "dep:cubecl-hip-sys", "dep:cubecl-runtime"]
+
+[lints]
+workspace = true
