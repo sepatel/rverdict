@@ -21,7 +21,7 @@ use std::path::PathBuf;
 
 pub use checkpoint::{Checkpoint, ModelRef, Settings, Weights};
 pub use device::{BackendChoice, SelectedBackend, select};
-pub use engine::Engine;
+pub use engine::{Engine, Evaluated, RawQuestion};
 pub use rverdict_model::Precision;
 
 #[derive(Debug, thiserror::Error)]

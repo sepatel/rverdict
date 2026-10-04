@@ -1,0 +1,17 @@
+[package]
+name = "rverdict-server"
+description = "A /v1/systemone HTTP server over any rverdict decider"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
+rverdict-core = { path = "../rverdict-core" }
+serde_json.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "net", "sync"] }
+
+[lints]
+workspace = true

@@ -6,6 +6,7 @@
 
 use std::fmt::Write;
 
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
 
 use crate::wire::{NoulCriteria, Question};
@@ -15,14 +16,15 @@ pub const NOUL_TRUE: &str = "Yes, condition holds true.";
 pub const NOUL_FALSE: &str = "No, condition is false.";
 
 /// A question reduced to text: one instruction and one description per option.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Rendered {
     pub instructions: String,
     pub options: Vec<String>,
     pub kind: RenderedKind,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
 pub enum RenderedKind {
     /// Options are `[true, false]`. `explicit` is false when the defaults were
     /// used, which enables zero-shot debiasing.

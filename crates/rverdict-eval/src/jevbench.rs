@@ -7,51 +7,12 @@
 
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
-use serde_json::{Map, Value};
-
 use crate::EvalError;
+use crate::task::Task;
 
 /// Commit the published items are read from, so results stay comparable.
 pub const COMMIT: &str = "bb05a335bc809e61b20c0f745d25499a82b326fc";
 pub const TIERS: [&str; 3] = ["easy", "original", "hard"];
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct Task {
-    pub id: String,
-    pub family: String,
-    pub state: Value,
-    pub question: Map<String, Value>,
-    /// `None` when the item has no agreed answer; such items are not scored.
-    pub expected: Option<Value>,
-    #[serde(deserialize_with = "labels")]
-    pub labels: Vec<String>,
-    #[serde(skip)]
-    pub tier: String,
-}
-
-impl Task {
-    /// Reverses a choice question's option order, for order-invariance runs.
-    pub fn reverse_choice_options(&mut self) {
-        if let Some(Value::Object(criteria)) = self.question.get_mut("criteria") {
-            let reversed: Map<String, Value> = std::mem::take(criteria).into_iter().rev().collect();
-            *criteria = reversed;
-        }
-    }
-}
-
-fn labels<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
-    let raw = Vec::<Value>::deserialize(d)?;
-    Ok(raw.iter().map(label).collect())
-}
-
-/// JevBench compares labels as strings; score levels are integers in the file.
-pub fn label(value: &Value) -> String {
-    match value {
-        Value::String(s) => s.clone(),
-        other => other.to_string(),
-    }
-}
 
 /// Where JevBench files are cached, per pinned commit.
 pub fn cache_dir() -> PathBuf {
@@ -83,7 +44,7 @@ pub fn load(tiers: &[&str], dir: &Path) -> Result<Vec<Task>, EvalError> {
         })?;
         for line in text.lines().filter(|l| !l.trim().is_empty()) {
             let mut task: Task = serde_json::from_str(line)?;
-            (*tier).clone_into(&mut task.tier);
+            (*tier).clone_into(&mut task.subset);
             tasks.push(task);
         }
     }

@@ -6511,7 +6511,10 @@ dependencies = [
  "rverdict-core",
  "rverdict-engine",
  "rverdict-eval",
+ "rverdict-remote",
+ "rverdict-server",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -6528,6 +6531,7 @@ name = "rverdict-engine"
 version = "0.1.0"
 dependencies = [
  "burn",
+ "burn-flex",
  "burn-store",
  "cubecl-hip-sys",
  "cubecl-runtime",
@@ -6564,6 +6568,29 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "rverdict-remote"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "reqwest 0.13.5",
+ "rverdict-core",
+ "rverdict-server",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "rverdict-server"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "rverdict-core",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

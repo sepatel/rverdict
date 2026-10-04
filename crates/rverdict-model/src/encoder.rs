@@ -1,8 +1,6 @@
 use burn::nn::{Embedding, EmbeddingConfig, LayerNorm, LayerNormConfig, Linear, LinearConfig};
 use burn::prelude::*;
-use burn::tensor::activation::gelu;
-use burn::tensor::module::attention;
-use burn::tensor::ops::AttentionModuleOptions;
+use burn::tensor::activation::{gelu, softmax};
 
 use crate::config::{AttentionKind, EncoderConfig};
 use crate::rope;
@@ -190,10 +188,49 @@ impl<B: Backend> Attention<B> {
         let v = part(2);
 
         let mask = mask.clone().expand([batch, heads, seq, seq]);
-        let out = attention(q, k, v, Some(mask), None, AttentionModuleOptions::default());
+        let out = chunked_attention(&q, k, &v, &mask);
         self.wo
             .forward(out.swap_dims(1, 2).reshape([batch, seq, hidden]))
     }
+}
+
+/// Query rows per attention launch.
+const QUERY_CHUNK: usize = 512;
+
+/// Attention as explicit matmul → mask → softmax → matmul, over blocks of
+/// queries.
+///
+/// Burn's fused attention autotunes between kernels, and on Vulkan one of
+/// them returned wrong logits for some sequence lengths, differently from
+/// run to run as tuning results changed; the explicit form uses only the
+/// matmul and softmax primitives every backend already relies on. Blocking
+/// is exact, since each query's softmax is independent, and keeps every GPU
+/// launch short: one launch over thousands of queries can outlast a GPU
+/// driver's job timeout, which resets the device and silently corrupts
+/// results. It also bounds the score matrix's memory.
+fn chunked_attention<B: Backend>(
+    q: &Tensor<B, 4>,
+    k: Tensor<B, 4>,
+    v: &Tensor<B, 4>,
+    mask: &Tensor<B, 4, Bool>,
+) -> Tensor<B, 4> {
+    let [_, _, seq, head_dim] = q.dims();
+    #[expect(clippy::cast_precision_loss, reason = "head_dim is small")]
+    let scale = 1.0 / (head_dim as f64).sqrt();
+    let keys = k.swap_dims(2, 3);
+    let block = |start: usize, len: usize| {
+        let scores = q.clone().narrow(2, start, len).matmul(keys.clone()) * scale;
+        let scores = scores.mask_fill(mask.clone().narrow(2, start, len), f32::NEG_INFINITY);
+        softmax(scores, 3).matmul(v.clone())
+    };
+    if seq <= QUERY_CHUNK {
+        return block(0, seq);
+    }
+    let blocks = (0..seq)
+        .step_by(QUERY_CHUNK)
+        .map(|start| block(start, QUERY_CHUNK.min(seq - start)))
+        .collect();
+    Tensor::cat(blocks, 2)
 }
 
 impl<B: Backend> Mlp<B> {

@@ -8,7 +8,14 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-burn = { workspace = true, features = ["default", "dispatch", "flex"] }
+# No `autotune`: it caches one kernel choice for a range of shapes, and on
+# Vulkan the kernel it picked returned wrong logits for some shapes in the
+# range (research/phase-2-calibration.md). No `fusion` either: correct
+# without autotune, but no faster. Burn's `default` would enable both on
+# every backend, so features are listed one by one.
+burn = { workspace = true, features = ["std", "dispatch", "flex", "ndarray"] }
+# burn-flex's own defaults are its rayon threading and SIMD kernels.
+burn-flex = "0.21"
 burn-store = { workspace = true, features = ["std", "safetensors"] }
 hf-hub = { workspace = true, features = ["blocking"] }
 regex = "1"

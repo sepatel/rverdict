@@ -1,24 +1,37 @@
 //! From raw option logits to calibrated, typed answers. Pure math shared by
 //! every backend.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::render::{Rendered, RenderedKind};
 use crate::wire::Answer;
 
+/// One question's model output before calibration. Captured once, it lets
+/// calibration be refit without running the model again.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Logits {
+    pub logits: Vec<f32>,
+    /// The same question asked of an empty state, for zero-shot `noul`
+    /// debiasing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub null_logits: Option<Vec<f32>>,
+    pub state_tokens: usize,
+}
+
 /// How a checkpoint's logits become calibrated probabilities. Read from the
 /// checkpoint's calibration file and refit by `rverdict calibrate`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Calibration {
-    /// Used when no `map` is present.
-    #[serde(default = "one")]
-    pub temperature: f64,
-    #[serde(
-        default,
-        rename = "calibration_map",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub map: Option<TemperatureMap>,
+    /// The scaling for any question type without its own.
+    #[serde(flatten)]
+    pub scaling: Scaling,
+    /// Per question type (`noul`, `choice`, `score`): a model can be
+    /// overconfident on one type and well calibrated on another, so one
+    /// shared scaling would trade them off against each other.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub per_type: BTreeMap<String, Scaling>,
     /// Zero-shot `noul` debiasing, `correction = a·bias + b`, where `bias` is
     /// the true-minus-false logit gap of the question asked with no state.
     #[serde(
@@ -29,6 +42,38 @@ pub struct Calibration {
     pub noul_prior: Option<NoulPrior>,
     #[serde(default)]
     pub noul_decision: NoulDecision,
+}
+
+/// A temperature, fixed or conditioned on the input.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Scaling {
+    /// Used when no `map` is present.
+    #[serde(default = "one")]
+    pub temperature: f64,
+    #[serde(
+        default,
+        rename = "calibration_map",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub map: Option<TemperatureMap>,
+}
+
+impl Default for Scaling {
+    fn default() -> Self {
+        Self {
+            temperature: 1.0,
+            map: None,
+        }
+    }
+}
+
+/// The key a question type's [`Scaling`] is stored under.
+pub fn type_name(kind: &RenderedKind) -> &'static str {
+    match kind {
+        RenderedKind::Noul { .. } => "noul",
+        RenderedKind::Choice { .. } => "choice",
+        RenderedKind::Score => "score",
+    }
 }
 
 fn one() -> f64 {
@@ -85,18 +130,7 @@ impl Default for NoulDecision {
     }
 }
 
-impl Default for Calibration {
-    fn default() -> Self {
-        Self {
-            temperature: 1.0,
-            map: None,
-            noul_prior: None,
-            noul_decision: NoulDecision::default(),
-        }
-    }
-}
-
-impl Calibration {
+impl Scaling {
     #[expect(
         clippy::cast_precision_loss,
         reason = "token and option counts are small"
@@ -118,48 +152,54 @@ impl Calibration {
             + map.n_options * n as f64 / 8.0;
         t.clamp(map.lo, map.hi)
     }
+}
 
-    /// Turns one question's logits into its answer. `null_logits` are the
-    /// same question's logits with an empty state, needed only for a `noul`
-    /// without criteria when a prior is configured.
-    pub fn answer(
-        &self,
-        rendered: &Rendered,
-        logits: &[f32],
-        null_logits: Option<&[f32]>,
-        state_tokens: usize,
-    ) -> Answer {
+impl Calibration {
+    pub fn scaling_for(&self, kind: &RenderedKind) -> &Scaling {
+        self.per_type.get(type_name(kind)).unwrap_or(&self.scaling)
+    }
+
+    /// Calibrated probabilities over a question's options, in option order,
+    /// before any `noul` decision rule. For a `noul` with `null_logits` and a
+    /// configured prior, the state-free bias is removed first.
+    pub fn distribution(&self, kind: &RenderedKind, raw: &Logits) -> Vec<f64> {
+        let mut logits = raw.logits.clone();
+        if let (RenderedKind::Noul { .. }, Some(null), Some(prior)) =
+            (kind, &raw.null_logits, self.noul_prior)
+        {
+            let bias = f64::from(null[0] - null[1]);
+            #[expect(clippy::cast_possible_truncation, reason = "logits are f32")]
+            let correction = (prior.a * bias + prior.b) as f32;
+            logits[0] -= correction;
+        }
+        softmax(
+            &logits,
+            self.scaling_for(kind)
+                .temperature_for(&logits, raw.state_tokens),
+        )
+    }
+
+    /// Turns one question's logits into its answer.
+    pub fn answer(&self, rendered: &Rendered, raw: &Logits) -> Answer {
+        let probs = self.distribution(&rendered.kind, raw);
         match &rendered.kind {
             RenderedKind::Noul { .. } => {
-                let mut logits = logits.to_vec();
-                if let (Some(null), Some(prior)) = (null_logits, self.noul_prior) {
-                    let bias = f64::from(null[0] - null[1]);
-                    #[expect(clippy::cast_possible_truncation, reason = "logits are f32")]
-                    let correction = (prior.a * bias + prior.b) as f32;
-                    logits[0] -= correction;
-                }
-                let t = self.temperature_for(&logits, state_tokens);
-                let raw = softmax(&logits, t)[0].clamp(0.0, 1.0);
+                let p = probs[0].clamp(0.0, 1.0);
                 Answer::Noul {
-                    noul: round4(self.noul_decision.apply(raw)),
-                    noul_raw: Some(round4(raw)),
+                    noul: round4(self.noul_decision.apply(p)),
+                    noul_raw: Some(round4(p)),
                 }
             }
-            RenderedKind::Choice { keys } => {
-                let probs = softmax(logits, self.temperature_for(logits, state_tokens));
-                let best = argmax(logits);
-                Answer::Choice {
-                    choice: keys[best].clone(),
-                    confidence: margin_confidence(&probs),
-                    probabilities: keys
-                        .iter()
-                        .cloned()
-                        .zip(probs.iter().map(|&p| round4(p)))
-                        .collect(),
-                }
-            }
+            RenderedKind::Choice { keys } => Answer::Choice {
+                choice: keys[argmax(&probs)].clone(),
+                confidence: margin_confidence(&probs),
+                probabilities: keys
+                    .iter()
+                    .cloned()
+                    .zip(probs.iter().map(|&p| round4(p)))
+                    .collect(),
+            },
             RenderedKind::Score => {
-                let probs = softmax(logits, self.temperature_for(logits, state_tokens));
                 #[expect(clippy::cast_precision_loss, reason = "at most 10 levels")]
                 let score = probs
                     .iter()
@@ -223,8 +263,8 @@ pub fn margin_confidence(probs: &[f64]) -> f64 {
     (((n * p_max - 1.0) / (n - 1.0)).clamp(0.0, 1.0) * 1000.0).round() / 1000.0
 }
 
-fn argmax(logits: &[f32]) -> usize {
-    logits
+fn argmax(values: &[f64]) -> usize {
+    values
         .iter()
         .enumerate()
         .max_by(|a, b| a.1.total_cmp(b.1))
@@ -248,7 +288,7 @@ mod tests {
                 "noul_zero_shot_prior": {"a": -0.5, "b": 0.3}}"#,
         )
         .unwrap();
-        assert_eq!(calibration.map.map(|m| m.lo), Some(0.3));
+        assert_eq!(calibration.scaling.map.map(|m| m.lo), Some(0.3));
         assert_eq!(calibration.noul_prior, Some(NoulPrior { a: -0.5, b: 0.3 }));
         assert_eq!(
             calibration.noul_decision,

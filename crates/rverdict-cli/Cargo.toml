@@ -17,6 +17,9 @@ clap.workspace = true
 rverdict-core = { path = "../rverdict-core" }
 rverdict-engine = { path = "../rverdict-engine", default-features = false }
 rverdict-eval = { path = "../rverdict-eval" }
+rverdict-remote = { path = "../rverdict-remote" }
+rverdict-server = { path = "../rverdict-server" }
+tokio = { version = "1", features = ["rt-multi-thread", "net"] }
 serde_json.workspace = true
 
 [features]

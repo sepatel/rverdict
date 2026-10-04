@@ -28,6 +28,8 @@ pub enum BackendChoice {
     Wgpu,
     Cuda,
     Rocm,
+    /// burn-ndarray: slow, simple CPU kernels, for checking other backends.
+    Reference,
 }
 
 impl FromStr for BackendChoice {
@@ -40,8 +42,9 @@ impl FromStr for BackendChoice {
             "gpu" | "wgpu" => Ok(Self::Wgpu),
             "cuda" => Ok(Self::Cuda),
             "rocm" => Ok(Self::Rocm),
+            "reference" => Ok(Self::Reference),
             other => Err(format!(
-                "unknown backend {other:?}: expected auto, cpu, wgpu, cuda or rocm"
+                "unknown backend {other:?}: expected auto, cpu, wgpu, cuda, rocm or reference"
             )),
         }
     }
@@ -149,6 +152,12 @@ fn cuda_present() -> bool {
 }
 
 fn candidates(choice: BackendChoice) -> Vec<(String, DispatchDevice)> {
+    if choice == BackendChoice::Reference {
+        return vec![(
+            "reference (ndarray)".to_owned(),
+            DispatchDevice::NdArray(burn::backend::ndarray::NdArrayDevice::default()),
+        )];
+    }
     let mut list = Vec::new();
     let auto = choice == BackendChoice::Auto;
     #[cfg(feature = "cuda")]
@@ -184,9 +193,13 @@ fn candidates(choice: BackendChoice) -> Vec<(String, DispatchDevice)> {
     list
 }
 
-/// Points cubecl's autotune results and compiled kernels at rverdict's cache,
-/// so GPU warm-up is paid once per machine and driver rather than on every
-/// start. A host application that configured cubecl first keeps its settings.
+/// Points cubecl's compiled-kernel cache at rverdict's cache, so GPU warm-up
+/// is paid once rather than on every start. A host application that
+/// configured cubecl first keeps its settings.
+///
+/// The cache is keyed by the running binary: cubecl keys entries by its own
+/// version only, so a different build could otherwise be handed kernels it
+/// did not compile.
 #[cfg(any(
     feature = "vulkan",
     feature = "metal",
@@ -200,12 +213,37 @@ fn configure_kernel_cache() {
 
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
-        let root = rverdict_core::cache_root().join("kernels");
+        let root = rverdict_core::cache_root()
+            .join("kernels")
+            .join(build_fingerprint());
         let mut config = CubeClRuntimeConfig::default();
         config.autotune.cache = CacheConfig::File(root.clone());
         config.compilation.cache = Some(CacheConfig::File(root));
         let _ = quietly(|| CubeClRuntimeConfig::set(config));
     });
+}
+
+/// The running executable's size and modification time: cheap, and new for
+/// every build.
+#[cfg(any(
+    feature = "vulkan",
+    feature = "metal",
+    feature = "webgpu",
+    feature = "cuda",
+    feature = "rocm"
+))]
+fn build_fingerprint() -> String {
+    let stamp = std::env::current_exe()
+        .and_then(std::fs::metadata)
+        .map(|m| {
+            let modified = m
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_nanos());
+            format!("{:x}-{modified:x}", m.len())
+        });
+    stamp.unwrap_or_else(|_| "unknown".to_owned())
 }
 
 /// Selects the first candidate that passes the self-test. CPU always passes.

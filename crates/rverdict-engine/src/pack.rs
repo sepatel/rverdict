@@ -12,14 +12,16 @@ use crate::EngineError;
 
 const MASK: &str = "[MASK]";
 const SEP: &str = "[SEP]";
-/// Upper bound on state tokens before truncation, below the context window.
-const MAX_STATE_TOKENS: usize = 8192;
+/// Default upper bound on state tokens before truncation, below the context
+/// window. Von's default.
+pub const MAX_STATE_TOKENS: usize = 8192;
 
 pub struct Packer {
     tokenizer: Tokenizer,
     mask_id: u32,
     digit_split: bool,
     window: usize,
+    max_state_tokens: usize,
 }
 
 /// A state cut to fit the window.
@@ -41,6 +43,7 @@ impl Packer {
             mask_id,
             digit_split,
             window,
+            max_state_tokens: MAX_STATE_TOKENS,
         })
     }
 
@@ -83,6 +86,10 @@ impl Packer {
         }
     }
 
+    pub fn set_max_state_tokens(&mut self, tokens: usize) {
+        self.max_state_tokens = tokens;
+    }
+
     pub fn pack(
         &self,
         state: &str,
@@ -120,7 +127,8 @@ impl Packer {
         options: &[String],
     ) -> Result<(String, Option<Cut>), EngineError> {
         let reserve = self.ids(&self.text("", question, options), true)?.len() + 8;
-        let limit = MAX_STATE_TOKENS
+        let limit = self
+            .max_state_tokens
             .min(self.window.saturating_sub(reserve))
             .max(16);
         let text = if self.digit_split {

@@ -7,8 +7,8 @@ an embeddable library, a CLI and a server, and its training pipeline is
 built in from the start. Post Office is the first consumer and uses it as its
 main classification engine.
 
-Status: baseline agreed 2026-10-03 (see section 9). Phases 0 and 1 complete;
-see `research/phase-0-spike.md` and `research/phase-1-engine.md`.
+Status: baseline agreed 2026-10-03 (see section 9). Phases 0–2 complete; see
+`research/phase-0-spike.md`, `phase-1-engine.md` and `phase-2-calibration.md`.
 
 ---
 
@@ -144,11 +144,17 @@ Phase 0 measured Flex 2× and Vulkan 5× slower.
   in CI by compilation and by hand per `docs/backend-checklist.md`.
 - **Precision.** f32 by default; f16 opt-in (`--f16`), with layer norms kept
   in f32 because f16 norms broke parity on Vulkan. f16 halves weight memory
-  (≈ 1.6 GB → 0.8 GB) and ran 2.5× faster on the reference iGPU with identical
-  predictions. It becomes the GPU default once the self-test covers f16 per
-  device.
+  (≈ 1.6 GB → 0.8 GB) and, with autotune off, runs about 3× faster than f32 on
+  the reference iGPU with identical predictions. It becomes the GPU default
+  once the self-test covers f16 per device.
+- **No autotune, no fusion** (Phase 2): Burn's autotune replayed a kernel
+  choice onto shapes it computed wrongly on Vulkan; fusion is correct without
+  autotune but no faster. Attention is explicit matmul → softmax → matmul in
+  blocks of 512 queries, which keeps every GPU launch under driver timeouts.
+  GPU correctness is checked with `rverdict eval compare` on long inputs, not
+  only JevBench.
 - **Caches.** Converted weights (content-addressed by the source blob's hash)
-  and cubecl's autotune results and compiled kernels live under the rverdict
+  and cubecl's compiled kernels (keyed by the running binary) live under the rverdict
   cache (`RVERDICT_CACHE`), so GPU warm-up is paid once per machine.
 - **Distribution.** Release binaries for Linux, macOS and Windows built with
   wgpu and Flex, plus a CUDA build if it cannot safely live in the main one.
@@ -336,6 +342,16 @@ stay in Rust, unchanged.
 Per-rule confidence thresholds, with a global default of 0.9. Below the threshold
 with no LLM fallback, apply a "needs review" label instead of acting.
 
+From Phase 2:
+- **Calibrate per rule.** A rule is a fixed question, and calibration fitted
+  on one question learns that question's bias; each rule gets its own
+  calibration from its own labelled history (shadow-mode LLM labels and user
+  corrections), refit as the history grows, and judged by held-out NLL.
+- **Cap long emails** with `set_max_state_tokens` (2,048 suggested): attention
+  cost grows with the square of the length, and the head and tail of an email
+  carry most of what a rule needs.
+- **Use f16 on GPUs** once the self-test covers it.
+
 ### 6.4 Storage and UI
 - Migration: store the decision backend, model id and version, the
   probabilities as JSON, the confidence, and in shadow mode the agreement
@@ -406,6 +422,14 @@ so it never blocks Post Office.
   `rverdict-remote`.
 - **Done when**: a calibration refit measurably lowers ECE on a held-out
   split.
+- **Outcome** ✅ 2026-10-03, with the criterion changed to NLL: on 1,988
+  held-out Enron decisions the refit raised zero-shot noul accuracy from
+  0.677 to 0.737 and lowered NLL from 0.630 to 0.595 overall (95% interval of
+  the change [−0.045, −0.026]). ECE could not show it: it was already 0.011
+  overall, because what was wrong was a bias, not overconfidence. NLL, a
+  proper scoring rule, is the calibration criterion from now on. The server,
+  remote client and `eval compare` shipped; capturing found and fixed two GPU
+  correctness bugs (`research/phase-2-calibration.md`).
 
 ### Phase 3: training loop
 - `rverdict-data` (HF parquet builders, synthetic generator),
@@ -466,7 +490,8 @@ so it never blocks Post Office.
 | Default act threshold | 0.9 confidence; can be set per rule. Revisit 0.95 once calibration data on real mail exists |
 | Remote backends at launch | TypeSafe Jev cloud and Cloudflare Workers AI (Clef, Clef-flash, Jev), both through the Jev-compatible `rverdict-remote` client and marked non-local. Local is the default and the goal |
 | Weight downloads | Straight from Hugging Face (`hf-hub` crate), pinned to a revision with sha256 checks |
-| Framework and backends | Burn 0.21; wgpu (auto adapter) as the default GPU path, CUDA and ROCm optional, Flex always present as the CPU fallback; chosen at runtime |
+| Framework and backends | Burn 0.21; wgpu (auto adapter) as the default GPU path, CUDA and ROCm optional, Flex always present as the CPU fallback; chosen at runtime; autotune and fusion off |
+| Calibration criterion | Held-out NLL (a proper scoring rule), with ECE reported alongside; per question type, and per rule in Post Office |
 | Target hardware | Everyone's: open source, portable across vendors and operating systems. The 890M machine is only the reference for Phase 0 numbers |
 
 ## 10. Open questions
@@ -477,16 +502,23 @@ so it never blocks Post Office.
   remove the JevBench runner and any references to it. The Jev Decision Index
   (38 public benchmarks, `apolinario/decision-index`) is a candidate starting
   point.
-- Von's `noul` answers are flattened by its JevBench-fitted calibration map
-  (T ≈ 2.6–5.7 on short emails). Refitting calibration on email (Phase 2) is
-  the first fix; training (Phases 3–5) the real one.
+- Report the autotune bug upstream to cubecl with the Enron reproduction
+  (`research/phase-2-calibration.md`); re-enable autotune once fixed or once
+  tuning keys are exact shapes. Measure training throughput without it in
+  Phase 3.
+- Detect GPU device loss and fail the request instead of returning an answer
+  computed on a reset device.
+- Call TypeSafe and Cloudflare for real once API keys are available, and add
+  Jev's Workers AI model id when Cloudflare documents it.
 - CPU speed: Flex's fused attention (~36 GFLOP/s) and broadcast element-wise
   kernels dominate CPU inference. Options: upstream Flex work or an attention
   kernel of our own.
 - Make f16 the default on GPUs: extend the self-test to f16 per device.
-- Von's zero-shot `noul` scores 0.21 on an obvious refund request; until
-  calibration and training fix it, Post Office should map rules to described
-  `choice` options or `noul` with explicit criteria.
+- Von's zero-shot `noul` leans the wrong way on some questions (0.21 on an
+  obvious refund request). Per-rule calibration fixes the bias it shows on a
+  given rule (+6 points on Enron spam); training fixes the model. Until a rule
+  is calibrated, Post Office should prefer described `choice` options or
+  `noul` with explicit criteria.
 - Run the lavapipe, Metal and Windows CI jobs on the first push; run CUDA and
   ROCm on real hardware per `docs/backend-checklist.md`.
 - Retire `rverdict-spike`'s private copy of Von packing now that the engine

@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use burn::{Dispatch, DispatchDevice};
 use rverdict_core::{
-    Answer, OrderedMap, Rendered, RenderedKind, Request, Response, Truncation, Usage, cache_root,
-    render, state_text,
+    Answer, Calibration, Logits, OrderedMap, Rendered, RenderedKind, Request, Response, Truncation,
+    Usage, cache_root, render, state_text,
 };
 use rverdict_model::{
     DecisionModel, EncoderConfig, OptionAttention, PackedSequence, Precision, build_input,
@@ -58,8 +58,8 @@ fn save_converted(model: &DecisionModel<Dispatch>, path: &Path) -> Result<(), En
     })
 }
 
-/// One question's packed rows: its own, and for an uncriteria'd `noul` the
-/// same question asked of an empty state.
+/// One question's packed rows: its own, and for a `noul` without criteria
+/// the same question asked of an empty state.
 struct Planned {
     id: String,
     rendered: Rendered,
@@ -67,6 +67,21 @@ struct Planned {
     null_row: Option<usize>,
     state_tokens: usize,
     cut: Option<Cut>,
+}
+
+/// A request's questions with their model output, before calibration.
+#[derive(Debug, Clone)]
+pub struct Evaluated {
+    pub questions: Vec<RawQuestion>,
+    pub usage: Usage,
+    pub truncation: Option<Truncation>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawQuestion {
+    pub id: String,
+    pub rendered: Rendered,
+    pub logits: Logits,
 }
 
 impl Engine {
@@ -124,10 +139,52 @@ impl Engine {
         &self.backend
     }
 
+    /// Caps the state tokens kept before middle truncation (default 8192).
+    /// Attention cost grows with the square of the length, so lower caps
+    /// trade context for latency on long inputs.
+    pub fn set_max_state_tokens(&mut self, tokens: usize) {
+        self.packer.set_max_state_tokens(tokens);
+    }
+
+    pub fn calibration(&self) -> &Calibration {
+        &self.settings.calibration
+    }
+
+    /// Replaces the checkpoint's calibration, e.g. with one refit on the
+    /// caller's own labelled data.
+    pub fn set_calibration(&mut self, calibration: Calibration) {
+        self.settings.calibration = calibration;
+    }
+
     pub fn decide(&self, request: &Request) -> Result<Response, EngineError> {
+        let calibration = &self.settings.calibration;
+        let evaluated = self.evaluate(request, calibration.noul_prior.is_some())?;
+        let answers: OrderedMap<Answer> = evaluated
+            .questions
+            .iter()
+            .map(|q| (q.id.clone(), calibration.answer(&q.rendered, &q.logits)))
+            .collect();
+        Ok(Response {
+            model: self.name.clone(),
+            usage: Usage {
+                output_tokens: answers.len(),
+                ..evaluated.usage
+            },
+            answers,
+            truncation: evaluated.truncation,
+        })
+    }
+
+    /// Runs the model on every question of a request without calibrating.
+    /// `null_for_nouls` also asks each `noul` without criteria of an empty
+    /// state, which zero-shot debiasing and its fitting need.
+    pub fn evaluate(
+        &self,
+        request: &Request,
+        null_for_nouls: bool,
+    ) -> Result<Evaluated, EngineError> {
         let questions = request.parse_questions()?;
         let state = state_text(&request.state);
-        let debias = self.settings.calibration.noul_prior.is_some();
 
         let mut rows = Vec::new();
         let mut planned = Vec::with_capacity(questions.len());
@@ -141,15 +198,16 @@ impl Engine {
                     .pack(&fitted, &rendered.instructions, &rendered.options)?,
             );
             let row = rows.len() - 1;
-            let null_row = if debias && rendered.kind == (RenderedKind::Noul { explicit: false }) {
-                rows.push(
-                    self.packer
-                        .pack("", &rendered.instructions, &rendered.options)?,
-                );
-                Some(rows.len() - 1)
-            } else {
-                None
-            };
+            let null_row =
+                if null_for_nouls && rendered.kind == (RenderedKind::Noul { explicit: false }) {
+                    rows.push(
+                        self.packer
+                            .pack("", &rendered.instructions, &rendered.options)?,
+                    );
+                    Some(rows.len() - 1)
+                } else {
+                    None
+                };
             planned.push(Planned {
                 state_tokens: self.packer.count(&fitted)?,
                 id,
@@ -160,17 +218,7 @@ impl Engine {
             });
         }
 
-        let logits = self.logits(&rows);
-        let calibration = &self.settings.calibration;
-        let answers: OrderedMap<Answer> = planned
-            .iter()
-            .map(|p| {
-                let null = p.null_row.map(|r| logits[r].as_slice());
-                let answer = calibration.answer(&p.rendered, &logits[p.row], null, p.state_tokens);
-                (p.id.clone(), answer)
-            })
-            .collect();
-
+        let mut logits = self.logits(&rows);
         let cuts: Vec<Cut> = planned.iter().filter_map(|p| p.cut).collect();
         let truncation = cuts
             .iter()
@@ -181,14 +229,25 @@ impl Engine {
                 strategy: "middle".into(),
                 questions_affected: cuts.len(),
             });
-
-        Ok(Response {
-            model: self.name.clone(),
-            usage: Usage {
-                input_tokens: rows.iter().map(|r| r.token_ids.len()).sum(),
-                output_tokens: answers.len(),
-            },
-            answers,
+        let usage = Usage {
+            input_tokens: rows.iter().map(|r| r.token_ids.len()).sum(),
+            output_tokens: 0,
+        };
+        let questions = planned
+            .into_iter()
+            .map(|p| RawQuestion {
+                logits: Logits {
+                    logits: std::mem::take(&mut logits[p.row]),
+                    null_logits: p.null_row.map(|r| std::mem::take(&mut logits[r])),
+                    state_tokens: p.state_tokens,
+                },
+                id: p.id,
+                rendered: p.rendered,
+            })
+            .collect();
+        Ok(Evaluated {
+            questions,
+            usage,
             truncation,
         })
     }
@@ -246,5 +305,18 @@ impl Engine {
             .iter()
             .map(|m| flat.by_ref().take(m.len()).collect())
             .collect()
+    }
+}
+
+impl rverdict_core::Decider for Engine {
+    fn decide(&self, request: &Request) -> Result<Response, rverdict_core::DecideError> {
+        Engine::decide(self, request).map_err(|e| match e {
+            EngineError::InvalidRequest(invalid) => invalid.into(),
+            other => rverdict_core::DecideError::Failed(other.to_string()),
+        })
+    }
+
+    fn model(&self) -> &str {
+        &self.name
     }
 }

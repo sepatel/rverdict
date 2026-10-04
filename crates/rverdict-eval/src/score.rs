@@ -4,7 +4,7 @@ use rverdict_core::{Answer, Request, Response};
 use serde::Serialize;
 use serde_json::Map;
 
-use crate::jevbench::{Task, label};
+use crate::task::{Task, label};
 
 /// A distribution whose sum is this far from 1 is rescaled; further off, it
 /// is invalid and counts as wrong. JevBench's `RENORM_TOL`.
@@ -13,7 +13,7 @@ const RENORM_TOL: f64 = 2e-2;
 #[derive(Debug, Clone, Serialize)]
 pub struct Outcome {
     pub id: String,
-    pub tier: String,
+    pub subset: String,
     pub family: String,
     pub kind: String,
     /// `None` when the task has no expected answer.
@@ -105,7 +105,7 @@ fn outcome(task: &Task, result: Result<Response, String>, latency: Duration) -> 
         .to_owned();
     let mut out = Outcome {
         id: task.id.clone(),
-        tier: task.tier.clone(),
+        subset: task.subset.clone(),
         family: task.family.clone(),
         kind,
         correct: task.expected.as_ref().map(|_| false),
@@ -120,7 +120,7 @@ fn outcome(task: &Task, result: Result<Response, String>, latency: Duration) -> 
             .cloned()
             .ok_or_else(|| "no answer for q".to_owned())
     });
-    match answer.and_then(|a| validate(&distribution(&a), &task.labels)) {
+    match answer.and_then(|a| validate(&distribution(&a), &task.label_set())) {
         Ok(probs) => {
             let predicted = argmax(&probs);
             out.correct = task.expected.as_ref().map(|e| label(e) == predicted);
@@ -153,7 +153,7 @@ pub fn summarize<'a>(outcomes: impl IntoIterator<Item = &'a Outcome>, tasks: &[T
     let correct = scored.iter().filter(|o| o.correct == Some(true)).count();
 
     let mut brier = Vec::new();
-    let mut bins = [(0usize, 0.0f64, 0usize); 10];
+    let mut tops = Vec::new();
     for o in &scored {
         if o.probabilities.is_empty() {
             continue;
@@ -177,24 +177,9 @@ pub fn summarize<'a>(outcomes: impl IntoIterator<Item = &'a Outcome>, tasks: &[T
                 .sum::<f64>(),
         );
         let confidence = o.probabilities.iter().map(|(_, p)| *p).fold(0.0, f64::max);
-        #[expect(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "confidence is in [0, 1]"
-        )]
-        let bin = ((confidence * 10.0) as usize).min(9);
-        bins[bin].0 += 1;
-        bins[bin].1 += confidence;
-        bins[bin].2 += usize::from(o.correct == Some(true));
+        tops.push((confidence, o.correct == Some(true)));
     }
-    let binned: usize = bins.iter().map(|b| b.0).sum();
-    let ece = bins
-        .iter()
-        .filter(|b| b.0 > 0)
-        .map(|&(n, conf, ok)| {
-            (n as f64 / binned as f64) * (ok as f64 / n as f64 - conf / n as f64).abs()
-        })
-        .sum();
+    let ece = ece(&tops);
 
     let mut latencies: Vec<f64> = outcomes.iter().map(|o| o.latency_ms).collect();
     latencies.sort_by(f64::total_cmp);
@@ -229,6 +214,30 @@ pub fn summarize<'a>(outcomes: impl IntoIterator<Item = &'a Outcome>, tasks: &[T
         p50_ms: percentile(0.5),
         p95_ms: percentile(0.95),
     }
+}
+
+/// Top-label expected calibration error over `(confidence, correct)`
+/// pairs, 10 equal-width bins (JevBench's `ece_top_label`).
+#[expect(clippy::cast_precision_loss, reason = "sample counts are small")]
+pub fn ece(pairs: &[(f64, bool)]) -> f64 {
+    let mut bins = [(0usize, 0.0f64, 0usize); 10];
+    for &(confidence, correct) in pairs {
+        let confidence = confidence.clamp(0.0, 1.0);
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "confidence is in [0, 1]"
+        )]
+        let bin = ((confidence * 10.0) as usize).min(9);
+        bins[bin].0 += 1;
+        bins[bin].1 += confidence;
+        bins[bin].2 += usize::from(correct);
+    }
+    let total = pairs.len().max(1) as f64;
+    bins.iter()
+        .filter(|b| b.0 > 0)
+        .map(|&(n, conf, ok)| (n as f64 / total) * (ok as f64 / n as f64 - conf / n as f64).abs())
+        .sum()
 }
 
 #[cfg(test)]

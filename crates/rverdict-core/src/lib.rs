@@ -3,15 +3,17 @@
 //! dependencies, so clients and servers can share it cheaply.
 
 mod cache;
+mod decider;
 mod ordered;
 pub mod render;
 pub mod score;
 pub mod wire;
 
 pub use cache::cache_root;
+pub use decider::{DecideError, Decider};
 pub use ordered::OrderedMap;
 pub use render::{Rendered, RenderedKind, render, state_text};
-pub use score::{Calibration, NoulDecision, NoulPrior, TemperatureMap};
+pub use score::{Calibration, Logits, NoulDecision, NoulPrior, Scaling, TemperatureMap, type_name};
 pub use wire::{
     Answer, InvalidQuestion, NoulCriteria, Question, Request, Response, Truncation, Usage,
 };

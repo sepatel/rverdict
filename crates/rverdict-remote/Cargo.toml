@@ -1,0 +1,23 @@
+[package]
+name = "rverdict-remote"
+description = "Async client for System One APIs: TypeSafe Jev, Cloudflare Workers AI (Clef), and any /v1/systemone server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
+rverdict-core = { path = "../rverdict-core" }
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { version = "1", features = ["time"] }
+
+[dev-dependencies]
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
+rverdict-server = { path = "../rverdict-server" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time"] }
+
+[lints]
+workspace = true

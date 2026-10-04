@@ -1,9 +1,13 @@
 # Phase 1: core, engine and Von parity
 
-Date: 2026-10-03. Numbers come from the reference machine (Ryzen AI 9 HX 370,
-Radeon 890M iGPU on Mesa 26.2.4 RADV); they are one data point, not targets.
-Reproduce with the `rverdict` CLI; the per-item outputs used below come from
-`rverdict eval jevbench --out run.json`.
+> **Correction (Phase 2, same day).** These runs used Burn's autotune,
+> which caches one kernel choice per range of shapes. On longer email inputs
+> the cached kernel returned wrong logits for some shapes in its range; no
+> JevBench item was affected, so the JevBench results below stand. Autotune
+> (and fusion, which turned out to be innocent) are now off. Vulkan medians
+> are then 148 ms (f32) and 52 ms (f16) instead of 96 ms and 39 ms, with
+> probabilities matching the CPU to 1e-4 in f32. See
+> `phase-2-calibration.md`.
 
 ## What was built
 
