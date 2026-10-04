@@ -19,10 +19,13 @@ burn-flex = "0.21"
 burn-store = { workspace = true, features = ["std", "safetensors"] }
 hf-hub = { workspace = true, features = ["blocking"] }
 regex = "1"
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"] }
 rverdict-core = { path = "../rverdict-core" }
 rverdict-model = { path = "../rverdict-model" }
 serde.workspace = true
 serde_json.workspace = true
+sha1 = "0.10"
+sha2 = "0.10"
 thiserror.workspace = true
 tokenizers.workspace = true
 # Enumerates adapters before cubecl is asked for one, because cubecl panics

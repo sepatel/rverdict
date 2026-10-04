@@ -15,6 +15,7 @@
 mod checkpoint;
 mod device;
 mod engine;
+pub mod install;
 mod pack;
 
 use std::path::PathBuf;
@@ -46,4 +47,10 @@ pub enum EngineError {
     Json(#[from] serde_json::Error),
     #[error("tokenizer: {0}")]
     Tokenizer(String),
+    #[error("downloading {url}: {detail}")]
+    Download { url: String, detail: String },
+    #[error("{file} did not match its published hash ({detail})")]
+    Corrupt { file: String, detail: String },
+    #[error("cancelled")]
+    Cancelled,
 }

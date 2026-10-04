@@ -94,6 +94,17 @@ pub struct TemperatureMap {
     pub lo: f64,
     #[serde(default = "map_hi")]
     pub hi: f64,
+    /// The most options of any question the map was fitted on. Larger
+    /// questions use this count: extrapolating the `n_options` term made
+    /// Von's map (−3.56 per 8 options) sharpen 100-option menus to its floor
+    /// and report wrong answers at 0.96 confidence.
+    #[serde(default = "map_max_options")]
+    pub max_options: usize,
+}
+
+/// Von's map was fitted on JevBench, whose questions have 2 to 6 options.
+fn map_max_options() -> usize {
+    6
 }
 
 fn map_lo() -> f64 {
@@ -149,7 +160,7 @@ impl Scaling {
         let t = map.bias
             + map.entropy * entropy
             + map.log_tokens * (state_tokens.max(1) as f64).log10() / 4.0
-            + map.n_options * n as f64 / 8.0;
+            + map.n_options * n.min(map.max_options.max(2)) as f64 / 8.0;
         t.clamp(map.lo, map.hi)
     }
 }
@@ -278,6 +289,26 @@ fn round4(p: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn large_menus_get_the_temperature_of_the_largest_fitted_question() {
+        let scaling = Scaling {
+            temperature: 1.0,
+            map: Some(TemperatureMap {
+                bias: 4.0,
+                entropy: 0.0,
+                log_tokens: 0.0,
+                n_options: -3.5574,
+                lo: 0.3,
+                hi: 12.0,
+                max_options: 6,
+            }),
+        };
+        let six = scaling.temperature_for(&[0.0; 6], 100);
+        let hundred = scaling.temperature_for(&[0.0; 100], 100);
+        assert!((six - 1.332).abs() < 1e-3, "{six}");
+        assert!((hundred - six).abs() < 1e-12, "{hundred}");
+    }
 
     #[test]
     fn von_calibration_file_parses_with_its_field_names() {

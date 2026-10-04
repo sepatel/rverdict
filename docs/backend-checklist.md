@@ -7,6 +7,9 @@ record the result in the table below.
 
 ## Steps
 
+`scripts/backend-check.sh [wgpu|cuda|rocm]` runs steps 1–6 on Linux and
+prints a summary; the steps below say what it checks.
+
 1. Build for the target:
 
    | Target | Command |
@@ -38,3 +41,4 @@ record the result in the table below.
 | Date | Hardware | Backend | Driver | JevBench (all) | p50 | Notes |
 |---|---|---|---|---|---|---|
 | 2026-10-03 | Radeon 890M iGPU | Vulkan | Mesa 26.2.4 (RADV) | 137/231 | 148 ms (f32), 52 ms (f16) | Reference machine; 0 order flips; identical to CPU on JevBench and 16 long emails; autotune and fusion off |
+| 2026-10-04 | Radeon 680M iGPU | Vulkan | Mesa 25.2.8 (RADV) | 137/231 | 227 ms (f32), 136 ms (f16) | 0 order flips; identical to CPU on JevBench and 24 long emails (f32) |

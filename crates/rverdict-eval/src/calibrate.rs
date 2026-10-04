@@ -207,6 +207,11 @@ fn fit_type(
     let with_prior = prior_form != PriorForm::None;
     let start_prior = start.noul_prior.unwrap_or(NoulPrior { a: 0.0, b: 0.0 });
     let base = *start.per_type.get(kind).unwrap_or(&start.scaling);
+    let max_options = subset
+        .iter()
+        .map(|c| c.logits.logits.len())
+        .max()
+        .unwrap_or(2);
     let bounds = base.map.map_or((0.3, 12.0), |m| (m.lo, m.hi));
     let build = |p: &[f64]| -> (Scaling, NoulPrior) {
         let (scaling, rest) = match form {
@@ -220,6 +225,7 @@ fn fit_type(
                         n_options: p[3],
                         lo: bounds.0,
                         hi: bounds.1,
+                        max_options,
                     }),
                 },
                 &p[4..],

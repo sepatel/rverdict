@@ -9,7 +9,7 @@ pub mod render;
 pub mod score;
 pub mod wire;
 
-pub use cache::cache_root;
+pub use cache::{cache_root, set_cache_root};
 pub use decider::{DecideError, Decider};
 pub use ordered::OrderedMap;
 pub use render::{Rendered, RenderedKind, render, state_text};

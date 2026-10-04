@@ -77,9 +77,9 @@ pub struct Checkpoint {
     pub settings: Settings,
 }
 
-const DECISION_SAFETENSORS: &str = "decision.safetensors";
-const OPTION_MARKER_PT: &str = "option_marker.pt";
-const CALIBRATION: &str = "marker_calibration.json";
+pub(crate) const DECISION_SAFETENSORS: &str = "decision.safetensors";
+pub(crate) const OPTION_MARKER_PT: &str = "option_marker.pt";
+pub(crate) const CALIBRATION: &str = "marker_calibration.json";
 
 impl Checkpoint {
     /// Loads a checkpoint from a local directory.

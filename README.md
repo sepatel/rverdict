@@ -28,6 +28,7 @@ cargo build --release -p rverdict-cli
   --score "How urgent is this?=not urgent,soon,blocking"
 ./target/release/rverdict eval jevbench               # downloads the public set on first use
 ./target/release/rverdict serve                       # POST http://127.0.0.1:8090/v1/systemone
+./target/release/rverdict install --dir ./models      # verified install into your own directory
 ```
 
 Existing Jev, Clef or Von clients can point at `rverdict serve` by changing
@@ -36,6 +37,11 @@ instead of the local model: `--remote <url>` (any `/v1/systemone` server),
 `--typesafe` (TypeSafe Jev, `TYPESAFE_API_KEY`) or
 `--cloudflare @cf/cloudflare/clef` (Workers AI, `CLOUDFLARE_ACCOUNT_ID` and
 `CLOUDFLARE_API_TOKEN`).
+
+Apps that embed rverdict and keep models in their own data directory use
+`rverdict_engine::install` (download with progress and cancellation, size
+and hash checks against Hugging Face, PyTorch weights converted to
+safetensors) and `rverdict_core::set_cache_root`.
 
 To refit calibration on your own labelled decisions, see
 [`docs/calibration.md`](docs/calibration.md).

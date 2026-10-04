@@ -26,6 +26,15 @@ enum Command {
     Devices(model::ModelArgs),
     /// Download a model into the local Hugging Face cache.
     Fetch(model::ModelArgs),
+    /// Install a pinned model into a directory, verified and converted to
+    /// safetensors, as apps embedding rverdict do.
+    Install {
+        /// A model alias or `owner/name@revision`.
+        #[arg(long, default_value = "von")]
+        model: String,
+        #[arg(long)]
+        dir: std::path::PathBuf,
+    },
     /// Run a benchmark.
     #[command(subcommand)]
     Eval(eval::Eval),
@@ -51,6 +60,24 @@ fn main() -> Result<()> {
         Command::Fetch(args) => {
             let checkpoint = args.checkpoint()?;
             println!("{} ({:?})", checkpoint.name, checkpoint.weights);
+        }
+        Command::Install { model, dir } => {
+            let model = rverdict_engine::ModelRef::parse(&model);
+            let mut last = String::new();
+            let checkpoint = rverdict_engine::install::install(&dir, &model, |step| {
+                let line = match step {
+                    rverdict_engine::install::InstallStep::Downloading { file, done, total } => {
+                        format!("{file}: {} of {} MB", done >> 20, total >> 20)
+                    }
+                    other => format!("{other:?}"),
+                };
+                if line != last {
+                    eprintln!("{line}");
+                    last = line;
+                }
+                true
+            })?;
+            println!("{} installed ({:?})", checkpoint.name, checkpoint.weights);
         }
         Command::Eval(eval) => eval.run()?,
         Command::Calibrate(calibrate) => calibrate.run()?,
